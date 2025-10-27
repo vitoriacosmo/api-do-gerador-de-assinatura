@@ -75,7 +75,7 @@ def redimensionar_assinatura(imagem, max_largura=280, max_altura=50):
     nova_largura = int(largura_img * proporcao)
     nova_altura = int(altura_img * proporcao)
     
-    # BICUBIC geralmente melhor para assinaturas que LANCZOS
+    # BICUBIC melhor para assinaturas
     imagem_redim = imagem.resize((nova_largura, nova_altura), Image.BICUBIC)
     
     return imagem_redim
