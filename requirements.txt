@@ -1,0 +1,6 @@
+flask
+flask-cors
+pillow
+rembg
+gunicorn==20.1.0
+onnxruntime
