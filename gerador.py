@@ -1,8 +1,66 @@
-import requests
+from flask import Flask, request, send_file, jsonify, render_template_string
 from PIL import Image, ImageFilter, ImageDraw, ImageFont, ImageEnhance
+import requests
 import io, os
 
+app = Flask(__name__)
 API_KEY = os.getenv("REMBG_API_KEY")
+
+HTML = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gerador de Assinaturas</title>
+    <style>
+        body { font-family: Arial; max-width: 600px; margin: 50px auto; padding: 20px; }
+        input, button { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        #resultado { margin-top: 20px; text-align: center; }
+        img { max-width: 100%; border: 1px solid #ddd; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>📝 Gerador de Assinaturas Médicas</h1>
+    <form id="form" enctype="multipart/form-data">
+        <input type="text" name="nome" placeholder="Nome do médico (ex: Dr. João Silva)" required>
+        <input type="text" name="crm" placeholder="CRM com estado (ex: CRM 12345-SP)" required>
+        <input type="text" name="frase" placeholder="Frase adicional (opcional)">
+        <input type="file" name="imagem" accept="image/*" required>
+        <button type="submit">Gerar Assinatura</button>
+    </form>
+    <div id="resultado"></div>
+    
+    <script>
+        document.getElementById('form').onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = e.target.querySelector('button');
+            btn.textContent = 'Processando...';
+            btn.disabled = true;
+            
+            const formData = new FormData(e.target);
+            const res = await fetch('/gerar', { method: 'POST', body: formData });
+            
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                document.getElementById('resultado').innerHTML = 
+                    `<h3>✅ Assinatura gerada!</h3>
+                     <img src="${url}">
+                     <br><a href="${url}" download="assinatura.png">
+                     <button type="button">Baixar Imagem</button></a>`;
+            } else {
+                document.getElementById('resultado').innerHTML = 
+                    '<p style="color:red">❌ Erro ao processar imagem</p>';
+            }
+            
+            btn.textContent = 'Gerar Assinatura';
+            btn.disabled = false;
+        };
+    </script>
+</body>
+</html>
+'''
 
 def processar_assinatura(img_bytes):
     # remove fundo via API
@@ -77,36 +135,39 @@ def criar_imagem_final(img, nome, crm, frase=""):
     
     return final
 
-# loop principal
-while True:
-    nome = input("Nome do médico com Dr./Dra.: ")
-    crm = input("CRM com estado: ")
-    frase = input("Frase adicional (Enter p/ pular): ").strip()
-    
-    img_path = input("Caminho ou URL da imagem: ").strip()
-    if not img_path:
-        break
-    
-    print("Processando...")
-    
-    # carrega imagem (local ou web)
+@app.route('/')
+def index():
+    return render_template_string(HTML)
+
+@app.route('/gerar', methods=['POST'])
+def gerar():
     try:
-        if img_path.startswith(('http://', 'https://')):
-            img_bytes = requests.get(img_path).content
-        else:
-            with open(img_path, 'rb') as f:
-                img_bytes = f.read()
+        nome = request.form['nome']
+        crm = request.form['crm']
+        frase = request.form.get('frase', '')
+        img_file = request.files['imagem']
+        
+        # processa imagem
+        img_bytes = img_file.read()
+        img = processar_assinatura(img_bytes)
+        if not img:
+            return jsonify({'erro': 'Erro ao processar imagem'}), 500
+        
+        # cria assinatura final
+        final = criar_imagem_final(img, nome, crm, frase)
+        
+        # retorna imagem
+        buffer = io.BytesIO()
+        final.save(buffer, 'PNG', optimize=True, dpi=(300,300))
+        buffer.seek(0)
+        
+        return send_file(buffer, mimetype='image/png', 
+                        as_attachment=True, 
+                        download_name=f'Assinatura - {nome}.png')
+    
     except Exception as e:
-        print(f"Erro ao carregar imagem: {e}")
-        continue
-    
-    img = processar_assinatura(img_bytes)
-    if not img:
-        print("Erro ao processar")
-        continue
-    
-    final = criar_imagem_final(img, nome, crm, frase)
-    arquivo = f"Assinatura - {nome}.png"
-    final.save(arquivo, "PNG", optimize=True, dpi=(300,300))
-    final.show()
-    print(f"✓ Salvo: {arquivo}\n")
+        return jsonify({'erro': str(e)}), 500
+
+if __name__ == '__main__':
+    print("🚀 Servidor rodando em http://localhost:5000")
+    app.run(debug=True, host='0.0.0.0', port=5000)
