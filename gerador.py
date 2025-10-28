@@ -1,19 +1,17 @@
 import requests
 from PIL import Image, ImageFilter, ImageDraw, ImageFont, ImageEnhance
 import io, os
-from tkinter import Tk, filedialog
 
 API_KEY = os.getenv("REMBG_API_KEY")
 
-def processar_assinatura(img_path):
+def processar_assinatura(img_bytes):
     # remove fundo via API
-    with open(img_path, "rb") as f:
-        r = requests.post("https://api.rembg.com/rmbg", 
-                         headers={"x-api-key": API_KEY}, 
-                         files={"image": f})
-        if r.status_code != 200:
-            return None
-        
+    r = requests.post("https://api.rembg.com/rmbg", 
+                     headers={"x-api-key": API_KEY}, 
+                     files={"image": img_bytes})
+    if r.status_code != 200:
+        return None
+    
     # abre e processa
     img = Image.open(io.BytesIO(r.content)).convert("RGBA")
     
@@ -85,13 +83,24 @@ while True:
     crm = input("CRM com estado: ")
     frase = input("Frase adicional (Enter p/ pular): ").strip()
     
-    Tk().withdraw()
-    img_path = filedialog.askopenfilename(title="Selecione a assinatura:")
+    img_path = input("Caminho ou URL da imagem: ").strip()
     if not img_path:
         break
     
     print("Processando...")
-    img = processar_assinatura(img_path)
+    
+    # carrega imagem (local ou web)
+    try:
+        if img_path.startswith(('http://', 'https://')):
+            img_bytes = requests.get(img_path).content
+        else:
+            with open(img_path, 'rb') as f:
+                img_bytes = f.read()
+    except Exception as e:
+        print(f"Erro ao carregar imagem: {e}")
+        continue
+    
+    img = processar_assinatura(img_bytes)
     if not img:
         print("Erro ao processar")
         continue
