@@ -4,183 +4,100 @@ import io, os
 from tkinter import Tk, filedialog
 
 API_KEY = os.getenv("REMBG_API_KEY")
-url = "https://api.rembg.com/rmbg"
-headers = {"x-api-key": API_KEY}
 
-# constantes
-LARGURA_FINAL = 480
-ALTURA_FINAL = 120
-MARGEM_HORIZONTAL = 40
-MARGEM_SUPERIOR = 10
-MARGEM_INFERIOR = 5
-DPI_QUALIDADE = (300, 300)  
-BLUR_MEDIO = 0.35 
-
-def processar_imagem_api(caminho_imagem):
-    # remove o fundo da imagem usando a API rembg
-    try:
-        with open(caminho_imagem, "rb") as input_file:
-            print("Removendo fundo da assinatura (aguarde)...")
-            response = requests.post(url, headers=headers, files={"image": input_file})
-            
-            if response.status_code != 200:
-                print(f"Erro na remoção: {response.status_code} {response.text}")
-                return None
-            
-            return response.content
-    except Exception as e:
-        print(f"Erro ao processar imagem: {e}")
-        return None
-
-def melhorar_assinatura(imagem_data):
-    # melhora a qualidade e aplica efeitos na assinatura
-    try:
-        # abre imagem retornada
-        output_image = Image.open(io.BytesIO(imagem_data)).convert("RGBA")
+def processar_assinatura(img_path):
+    # remove fundo via API
+    with open(img_path, "rb") as f:
+        r = requests.post("https://api.rembg.com/rmbg", 
+                         headers={"x-api-key": API_KEY}, 
+                         files={"image": f})
+        if r.status_code != 200:
+            return None
         
-        # aumenta contraste 
-        enhancer = ImageEnhance.Contrast(output_image)
-        output_image = enhancer.enhance(2.0)  
-        
-        # nitidez reduzida
-        output_image = output_image.filter(ImageFilter.EDGE_ENHANCE)
-        
-        # limpa pixels fracos e aplica preto puro
-        r, g, b, a = output_image.split()
-        a = a.point(lambda i: 0 if i < 25 else 255)
-        preto = Image.new("RGBA", output_image.size, (0, 0, 0, 255))
-        output_image = Image.composite(preto, Image.new("RGBA", output_image.size, (0,0,0,0)), a)
-        
-        # corrige corte com margem
-        bbox = output_image.getbbox()
-        if bbox:
-            margem = 10
-            bbox_expandido = (
-                max(0, bbox[0] - margem),
-                max(0, bbox[1] - margem),
-                min(output_image.width, bbox[2] + margem),
-                min(output_image.height, bbox[3] + margem)
-            )
-            output_image = output_image.crop(bbox_expandido)
-        
-        return output_image
-    except Exception as e:
-        print(f"Erro ao melhorar assinatura: {e}")
-        return None
+    # abre e processa
+    img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+    
+    # contraste e nitidez
+    img = ImageEnhance.Contrast(img).enhance(2.0)
+    img = img.filter(ImageFilter.EDGE_ENHANCE)
+    
+    # limpa fundo e aplica preto
+    r, g, b, a = img.split()
+    a = a.point(lambda i: 0 if i < 25 else 255)
+    preto = Image.new("RGBA", img.size, (0, 0, 0, 255))
+    img = Image.composite(preto, Image.new("RGBA", img.size, (0,0,0,0)), a)
+    
+    # recorta com margem
+    bbox = img.getbbox()
+    if bbox:
+        img = img.crop((max(0, bbox[0]-10), max(0, bbox[1]-10),
+                       min(img.width, bbox[2]+10), min(img.height, bbox[3]+10)))
+    
+    return img
 
-def redimensionar_assinatura(imagem, max_largura=280, max_altura=50):
-    # redimensiona mantendo proporção e qualidade
-    largura_img, altura_img = imagem.size
-    proporcao = min(max_largura / largura_img, max_altura / altura_img)
-    nova_largura = int(largura_img * proporcao)
-    nova_altura = int(altura_img * proporcao)
-    
-    # BICUBIC melhor para assinaturas
-    imagem_redim = imagem.resize((nova_largura, nova_altura), Image.BICUBIC)
-    
-    return imagem_redim
-
-def aplicar_blur_final(imagem):
-    # aplica blur moderado para aparência natural e suave
-    imagem = imagem.filter(ImageFilter.GaussianBlur(BLUR_MEDIO))
-    
-    # suaviza ainda mais as bordas
-    # imagem = imagem.filter(ImageFilter.SMOOTH_MORE)
-    
-    # ajustes finais mais sutis para manter suavidade
-    enhancer_contraste = ImageEnhance.Contrast(imagem)
-    imagem = enhancer_contraste.enhance(1.00)  
-    
-    enhancer_brilho = ImageEnhance.Brightness(imagem)
-    imagem = enhancer_brilho.enhance(0.92)  
-    
-    return imagem
-
-def criar_assinatura_completa(imagem_assinatura, nome, crm, frase_extra=""):
-    """Cria a imagem final com assinatura e texto"""
-    # carrega fonte
+def criar_imagem_final(img, nome, crm, frase=""):
+    # fonte
     try:
         font = ImageFont.truetype("arialbd.ttf", 11)
     except:
         font = ImageFont.load_default()
     
-    # prepara texto
+    # texto
     texto = f"{nome}\nCRM: {crm}"
-    if frase_extra:
-        texto += f"\n{frase_extra}"
+    if frase:
+        texto += f"\n{frase}"
     
-    # calcula dimensões do texto
-    temp_img = Image.new("RGBA", (1,1))
-    draw_temp = ImageDraw.Draw(temp_img)
-    bbox_texto = draw_temp.multiline_textbbox((0,0), texto, font=font, spacing=1)
-    altura_texto = bbox_texto[3] - bbox_texto[1]
-    largura_texto = bbox_texto[2] - bbox_texto[0]
+    # dimensões do texto
+    draw_temp = ImageDraw.Draw(Image.new("RGBA", (1,1)))
+    bbox_txt = draw_temp.multiline_textbbox((0,0), texto, font=font, spacing=1)
+    h_txt = bbox_txt[3] - bbox_txt[1]
+    w_txt = bbox_txt[2] - bbox_txt[0]
     
     # redimensiona assinatura
-    espaco_texto = altura_texto + MARGEM_INFERIOR
-    max_largura_assinatura = min(280, LARGURA_FINAL - MARGEM_HORIZONTAL)
-    max_altura_assinatura = min(50, ALTURA_FINAL - MARGEM_SUPERIOR - espaco_texto - MARGEM_INFERIOR)
+    max_w, max_h = 280, 50 - h_txt
+    w, h = img.size
+    escala = min(max_w/w, max_h/h)
+    img = img.resize((int(w*escala), int(h*escala)), Image.BICUBIC)
     
-    imagem_assinatura = redimensionar_assinatura(imagem_assinatura, max_largura_assinatura, max_altura_assinatura)
+    # blur e ajustes
+    img = img.filter(ImageFilter.GaussianBlur(0.35))
+    img = ImageEnhance.Brightness(img).enhance(0.92)
     
-    # aplica blur após redimensionamento
-    imagem_assinatura = aplicar_blur_final(imagem_assinatura)
+    # monta imagem final
+    final = Image.new("RGBA", (480, 120), "white")
+    draw = ImageDraw.Draw(final)
     
-    # cria imagem final com fundo branco
-    imagem_final = Image.new("RGBA", (LARGURA_FINAL, ALTURA_FINAL), "white")
-    draw = ImageDraw.Draw(imagem_final)
+    # centraliza assinatura
+    w_img, h_img = img.size
+    x = (480 - w_img) // 2
+    y = (120 - h_img - 5 - h_txt) // 2
+    final.paste(img, (x, y), img)
     
-    # centraliza verticalmente
-    nova_largura, nova_altura = imagem_assinatura.size
-    altura_conteudo = nova_altura + MARGEM_INFERIOR + altura_texto
-    y_inicio_assinatura = (ALTURA_FINAL - altura_conteudo) // 2
-    x_inicio_assinatura = (LARGURA_FINAL - nova_largura) // 2
+    # adiciona texto
+    draw.multiline_text(((480-w_txt)//2, y+h_img+5), texto, 
+                       fill=(0,0,0), font=font, align="center", spacing=1)
     
-    # cola assinatura
-    imagem_final.paste(imagem_assinatura, (x_inicio_assinatura, y_inicio_assinatura), imagem_assinatura)
-    
-    # adiciona texto centralizado
-    x_texto = (LARGURA_FINAL - largura_texto) // 2
-    y_texto = y_inicio_assinatura + nova_altura + MARGEM_INFERIOR
-    draw.multiline_text((x_texto, y_texto), texto, fill=(0,0,0), font=font, align="center", spacing=1)
-    
-    return imagem_final
+    return final
 
-def main():
-    # função principal
-    while True:
-        nome = input("Digite o nome do médico com Dr./Dra.: ")
-        crm = input("Digite o CRM com estado: ")
-        
-        add_frase = input("Adicionar frase adicional? (S/N): ").strip().lower()
-        frase_extra = ""
-        if add_frase == "s":
-            frase_extra = input("Digite a frase que deseja adicionar: ")
-        
-        # seleciona imagem
-        Tk().withdraw()
-        img = filedialog.askopenfilename(title="Selecione a imagem da assinatura: ")
-        if not img:
-            print("Nenhuma imagem selecionada.")
-            break
-        
-        # processa imagem na API
-        imagem_data = processar_imagem_api(img)
-        if not imagem_data:
-            continue
-        
-        # melhora a assinatura
-        assinatura_melhorada = melhorar_assinatura(imagem_data)
-        if not assinatura_melhorada:
-            continue
-        
-        # cria imagem final
-        imagem_final = criar_assinatura_completa(assinatura_melhorada, nome, crm, frase_extra)
-        
-        # salva com boa qualidade e mostra
-        arquivo_final = f"Assinatura - {nome}.png"
-        imagem_final.save(arquivo_final, "PNG", optimize=True, dpi=DPI_QUALIDADE)
-        imagem_final.show()
-
-if __name__ == "__main__":
-    main()
+# loop principal
+while True:
+    nome = input("Nome do médico com Dr./Dra.: ")
+    crm = input("CRM com estado: ")
+    frase = input("Frase adicional (Enter p/ pular): ").strip()
+    
+    Tk().withdraw()
+    img_path = filedialog.askopenfilename(title="Selecione a assinatura:")
+    if not img_path:
+        break
+    
+    print("Processando...")
+    img = processar_assinatura(img_path)
+    if not img:
+        print("Erro ao processar")
+        continue
+    
+    final = criar_imagem_final(img, nome, crm, frase)
+    arquivo = f"Assinatura - {nome}.png"
+    final.save(arquivo, "PNG", optimize=True, dpi=(300,300))
+    final.show()
+    print(f"✓ Salvo: {arquivo}\n")
